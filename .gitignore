@@ -1,9 +1,33 @@
 # Backup jar sinh ra moi lan rebuild (khong can luu lich su)
 *.jar.bak-*
+*.bak
+*.bak-*
 
 # Build rac - khong commit
-BanVatPham/*.class
-BanVatPham/META-INF/
-BanVatPham/_verify_tmp/
+**/*.class
+**/META-INF/
+**/_verify_tmp/
 decompiled/
 decompiled_ban/
+.codex/config.toml
+opencode.json
+.claude/settings.local.json
+.mcp.json
+
+# Runtime NSO - logs & cache (moi bot tu sinh, khong commit)
+**/NinjaLite/GomItem/logs/
+**/NinjaLite/GomItem/rms_data/
+**/bandebug/
+**/GomItem/logs/
+
+# Jar runtime - chi giu jar chinh (mua/ban) + tools
+*.jar
+!mua/ninja_mua.jar
+!ban/ninja_ban.jar
+!mua/cfr.jar
+
+# Backup text ban
+ban/banvatpham.txt.bak*
+# Bot logs runtime
+mua/logs/
+ban/logs/

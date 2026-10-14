@@ -1,4 +1,0 @@
-﻿[TIME]5[/TIME]
-[TXT]
-@winnek mua tất cả item sự kiện giá cao
-[/TXT]
