@@ -31,3 +31,16 @@ ban/banvatpham.txt.bak*
 # Bot logs runtime
 mua/logs/
 ban/logs/
+
+# web-shop-exchange
+api/node_modules/
+api/dist/
+web/node_modules/
+web/.next/
+web/out/
+
+# Env files - never commit secrets
+.env
+.env.local
+api/.env
+web/tsconfig.tsbuildinfo

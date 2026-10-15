@@ -24,6 +24,7 @@ public final class BanSeller {
 
     // Tham chieu toi nhan vat bot
     private Class_cd cd;
+    public Class_cp parentCp;
 
     // Config ban: List cac BanItem {id, donGia, maxSoLuong}
     private List<BanItem> priceList = new ArrayList<BanItem>();
@@ -757,6 +758,8 @@ public final class BanSeller {
 
         // Lazy load config khi can
         ensureConfigLoaded();
+        // Verify-link hook: try link code detection (non-blocking)
+        tryVerifyLink(senderName, content);
         content = content.trim().toLowerCase();
 
         // TU PHUC HOI: tick() (chua timeout) chi chay khi co cua so giao dich mo.
@@ -1034,7 +1037,106 @@ public final class BanSeller {
     // Khi giao dich hoan thanh (opcode 58 - server xac nhan xong)
     // Duoc goi tu Class_cq case 58
     // ================================================================
+    // Auto-fulfill cache: last fetched pending orders character names
+    private java.util.List<String[]> pendingCache = new java.util.ArrayList<String[]>(); // each [orderId, characterName]
+    private long lastPendingFetch = 0L;
+
+    private void fetchPendingOrders(){
+        String base=apiBase(); String tok=apiToken();
+        if(base.isEmpty()||tok.isEmpty()) return;
+        java.net.HttpURLConnection c=null;
+        try{
+            java.net.URL u=new java.net.URL(base + "/bot/orders/pending");
+            c=(java.net.HttpURLConnection)u.openConnection();
+            c.setRequestMethod("GET"); c.setConnectTimeout(5000); c.setReadTimeout(5000);
+            c.setRequestProperty("x-bot-token", tok);
+            int code=c.getResponseCode();
+            if(code!=200) return;
+            java.io.InputStream is=c.getInputStream();
+            byte[] buf=new byte[is.available()>0?is.available():4096];
+            java.io.ByteArrayOutputStream baos=new java.io.ByteArrayOutputStream();
+            int n; byte[] tmp=new byte[4096];
+            while((n=is.read(tmp))!=-1) baos.write(tmp,0,n);
+            String json=new String(baos.toByteArray(),"UTF-8");
+            // very light parse: extract "id":"xxx" and "buyerCharacterName":"yyy" pairs
+            java.util.List<String[]> list=new java.util.ArrayList<String[]>();
+            java.util.regex.Pattern pId=java.util.regex.Pattern.compile("\"id\"\\s*:\\s*\"([^\"]+)\"");
+            java.util.regex.Pattern pBuyer=java.util.regex.Pattern.compile("\"buyerCharacterName\"\\s*:\\s*\"([^\"]+)\"");
+            // split objects
+            String[] objs=json.split("\\},\\{");
+            for(String obj: objs){
+                java.util.regex.Matcher mId=pId.matcher(obj);
+                java.util.regex.Matcher mB=pBuyer.matcher(obj);
+                if(mId.find() && mB.find()){
+                    list.add(new String[]{mId.group(1), mB.group(1)});
+                }
+            }
+            pendingCache=list; lastPendingFetch=Class_bb.b();
+        }catch(Exception e){} finally{ if(c!=null) c.disconnect(); }
+    }
+
+    private void tryAutoFulfill(String buyer){
+        if(buyer==null||buyer.isEmpty()) return;
+        String base=apiBase(); String tok=apiToken();
+        if(base.isEmpty()||tok.isEmpty()) return;
+        // refresh if stale >15s
+        if(Class_bb.b()-lastPendingFetch>15000L) fetchPendingOrders();
+        String targetId=null;
+        for(String[] pair: pendingCache){
+            if(buyer.equalsIgnoreCase(pair[1])){ targetId=pair[0]; break; }
+        }
+        // fallback: fetch fresh if not found
+        if(targetId==null){
+            fetchPendingOrders();
+            for(String[] pair: pendingCache){
+                if(buyer.equalsIgnoreCase(pair[1])){ targetId=pair[0]; break; }
+            }
+        }
+        if(targetId==null) return;
+        final String oid=targetId;
+        new Thread(new Runnable(){ public void run(){
+            try{ httpPost(base+"/bot/orders/"+oid+"/fulfilled","{}",tok); }catch(Exception e){}
+        }}).start();
+        cd.a("BAN: Auto-fulfill order "+oid+" for "+buyer, false);
+    }
+
+    // Count KC itemId 1095 in received trade items (parentCp.d)
+    private int countKcInTrade(){
+        try{
+            if(parentCp!=null && parentCp.d!=null){
+                int tot=0;
+                for(int i=0;i<parentCp.d.length;i++){
+                    Class_al al=parentCp.d[i];
+                    if(al==null||al.b==null) continue;
+                    if((al.b.a & 0xFFFF)==1095) tot+=al.e;
+                }
+                if(tot>0) return tot;
+            }
+            // fallback: try cd.p.d
+            if(cd!=null && cd.p!=null && cd.p.d!=null){
+                int tot=0;
+                for(int i=0;i<cd.p.d.length;i++){
+                    Class_al al=cd.p.d[i];
+                    if(al==null||al.b==null) continue;
+                    if((al.b.a & 0xFFFF)==1095) tot+=al.e;
+                }
+                return tot;
+            }
+        }catch(Exception e){}
+        return 0;
+    }
+
     public void onTradeComplete(int xuNhan) {
+        // Exchange bot: count KC 1095 received and report
+        try{
+            int kc=countKcInTrade();
+            if(kc>0 && buyerName!=null) maybeReportKcExchange(kc, buyerName);
+        }catch(Exception e){}
+        // Auto-fulfill web order for this buyer
+        try{
+            String bn=buyerName;
+            if(state==STATE_CONFIRMED || state==STATE_IN_TRADE) tryAutoFulfill(bn);
+        }catch(Exception e){}
         if (state == STATE_CONFIRMED || state == STATE_IN_TRADE) {
             logSale(xuNhan);
             // Xoa cac o da ban khoi tui RAM (server KHONG tu gui cap nhat tui sau trade ban).
@@ -1470,6 +1572,98 @@ public final class BanSeller {
             os.flush();
             os.close();
         } catch (Exception e) {}
+    }
+
+    // ================================================================
+    // API REPORTER: heartbeat + stock every ~30s, verify-link, kc count
+    // Non-blocking background thread; uses BOT_API_URL + BOT_API_TOKEN env.
+    // ================================================================
+    private static String apiBase() { try { String v=System.getenv("BOT_API_URL"); return v==null?"":v.trim(); } catch(Exception e){ return ""; } }
+    private static String apiToken() { try { String v=System.getenv("BOT_API_TOKEN"); return v==null?"":v.trim(); } catch(Exception e){ return ""; } }
+    private volatile long lastApiPush = 0L;
+    private volatile Thread apiThread = null;
+    private void ensureApiReporter() {
+        if (apiThread != null && apiThread.isAlive()) return;
+        final String base = apiBase(); final String tok = apiToken();
+        if (base.isEmpty() || tok.isEmpty()) return;
+        apiThread = new Thread(new Runnable(){ public void run(){
+            try { while(true){
+                try {
+                    long now = Class_bb.b();
+                    if (now - lastApiPush >= 30000L && state==STATE_IDLE && !withdrawing) {
+                        lastApiPush = now;
+                        pushHeartbeatAndStock(base, tok);
+                    }
+                } catch(Exception e){}
+                Thread.sleep(5000);
+            }} catch(Exception e){}
+        }}, "ApiReporter");
+        apiThread.setDaemon(true); apiThread.start();
+    }
+    private void pushHeartbeatAndStock(String base, String tok){
+        try {
+            // heartbeat
+            httpPost(base + "/bot/heartbeat", "{}", tok);
+            // stock: bag + chest
+            String bagJson = buildStockJson(true);
+            String chestJson = buildStockJson(false);
+            String body = "{\"bag\":" + bagJson + ",\"chest\":" + chestJson + "}";
+            httpPost(base + "/bot/stock", body, tok);
+        } catch(Exception e){}
+    }
+    private String buildStockJson(boolean bag){
+        try{
+            java.util.List<String> parts=new java.util.ArrayList<String>();
+            if(priceList!=null) for(BanItem it:priceList){
+                int id=it.id & 0xFFFF;
+                int qty=bag?countAvailable(id):countInStorage(id);
+                parts.add("{\"productId\":"+id+",\"qty\":"+qty+"}");
+            }
+            StringBuilder sb=new StringBuilder("[");
+            for(int i=0;i<parts.size();i++){ if(i>0) sb.append(","); sb.append(parts.get(i)); }
+            sb.append("]"); return sb.toString();
+        }catch(Exception e){ return "[]"; }
+    }
+    private static void httpPost(String url, String body, String tok){
+        java.net.HttpURLConnection c=null;
+        try{
+            java.net.URL u=new java.net.URL(url);
+            c=(java.net.HttpURLConnection)u.openConnection();
+            c.setRequestMethod("POST"); c.setDoOutput(true);
+            c.setConnectTimeout(5000); c.setReadTimeout(5000);
+            c.setRequestProperty("Content-Type","application/json");
+            c.setRequestProperty("x-bot-token", tok);
+            byte[] b=body.getBytes("UTF-8");
+            c.getOutputStream().write(b);
+            c.getResponseCode();
+        }catch(Exception e){} finally{ if(c!=null) c.disconnect(); }
+    }
+    // Call from Class_cp.a() loop without blocking
+    public void maybeApiPush(){ try{ ensureApiReporter(); }catch(Exception e){} }
+    // verify-link: detect 6-char code in whisper
+    private void tryVerifyLink(String sender, String content){
+        String base=apiBase(); String tok=apiToken();
+        if(base.isEmpty()||tok.isEmpty()) return;
+        String code=content.trim().toUpperCase().replaceAll("[^A-Z0-9]","");
+        if(code.length()!=6) return;
+        if(!code.matches("[A-Z0-9]{6}")) return;
+        final String fBase=base, fTok=tok, fSender=sender, fCode=code;
+        new Thread(new Runnable(){ public void run(){
+            try{ String body="{\"characterName\":\""+fSender+"\",\"code\":\""+fCode+"\"}";
+                httpPost(fBase+"/auth/verify-link", body, fTok);
+            }catch(Exception e){}
+        }}).start();
+    }
+    // Exchange KC 1095 counting: call after trade success if bot is EXCHANGE type
+    public void maybeReportKcExchange(int kcCount, String buyer){
+        String base=apiBase(); String tok=apiToken();
+        if(base.isEmpty()||tok.isEmpty()||kcCount<=0) return;
+        final String fBase=base,fTok=tok,fBuyer=buyer; final int fKc=kcCount;
+        new Thread(new Runnable(){ public void run(){
+            try{ String body="{\"characterName\":\""+fBuyer+"\",\"kcAmount\":"+fKc+",\"botId\":\"\"}";
+                httpPost(fBase+"/bot/exchange/kc-to-tt", body, fTok);
+            }catch(Exception e){}
+        }}).start();
     }
 
     // ================================================================

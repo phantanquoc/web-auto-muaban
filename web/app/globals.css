@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --void: #0b0b12;
+  --charcoal: #14141d;
+  --surface: #1c1c28;
+  --gold: #ffc531;
+  --navy: #1e1e2d;
+  --mist: #f1f2f6;
+  --muted: #a1a1aa;
+}
+
+html { scroll-behavior: smooth; }
+
+body { text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
+
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Visible focus ring baseline */
+*:focus-visible {
+  outline: 2px solid #ffc531;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Reduced motion: disable decorative animation, keep text updates */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom scrollbar for dark surfaces */
+.dark-scroll::-webkit-scrollbar { height: 8px; width: 8px; }
+.dark-scroll::-webkit-scrollbar-thumb { background: #2e2e42; border-radius: 8px; }
+.dark-scroll::-webkit-scrollbar-track { background: transparent; }

@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum BotType {
+  SELL
+  EXCHANGE
+}
+
+enum OrderStatus {
+  PENDING
+  FULFILLED
+  EXPIRED
+}
+
+enum LedgerType {
+  FROZEN
+  DEDUCT
+  REFUND
+  EXCHANGE_CREDIT
+  EXCHANGE_DEBIT
+}
+
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  password       String
+  role           Role      @default(USER)
+  characterName  String?   @unique
+  balanceTt      Int       @default(0)
+  createdAt      DateTime  @default(now())
+  linkCodes      LinkCode[]
+  orders         Order[]
+  ledger         Ledger[]
+  exchanges      ExchangeRecord[]
+}
+
+model LinkCode {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  consumed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  @@index([userId])
+  @@index([code])
+}
+
+model Bot {
+  id              String   @id @default(cuid())
+  name            String
+  server          String?
+  type            BotType
+  mapHint         String?
+  posHint         String?
+  rateOverride    Int?
+  dailyLimitTt    Int?
+  enabled         Boolean  @default(true)
+  botTokenHash    String?  @unique
+  lastHeartbeatAt DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  stocks          BotStock[]
+  orders          Order[]
+  exchanges       ExchangeRecord[]
+}
+
+model Product {
+  id      Int     @id
+  donGia  Int
+  maxQty  Int     @default(999)
+  maVp    String?
+  createdAt DateTime @default(now())
+}
+
+model BotStock {
+  id        String   @id @default(cuid())
+  botId     String
+  bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  productId Int
+  bagQty    Int      @default(0)
+  chestQty  Int      @default(0)
+  updatedAt DateTime @default(now())
+  @@unique([botId, productId])
+  @@index([botId])
+}
+
+model Order {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id])
+  botId     String
+  bot       Bot         @relation(fields: [botId], references: [id])
+  items     Json
+  totalTt   Int
+  status    OrderStatus @default(PENDING)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  @@index([botId, status, createdAt])
+  @@index([userId])
+}
+
+model ExchangeRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  botId     String
+  bot       Bot      @relation(fields: [botId], references: [id])
+  direction String
+  kcAmount  Int
+  rate      Int
+  ttAmount  Int
+  status    String   @default("COMPLETED")
+  createdAt DateTime @default(now())
+  @@index([botId, createdAt])
+  @@index([userId])
+}
+
+model Ledger {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id])
+  type      LedgerType
+  amount    Int
+  refId     String?
+  botId     String?
+  createdAt DateTime   @default(now())
+  @@index([userId])
+  @@index([botId, createdAt])
+}

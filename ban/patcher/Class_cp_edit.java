@@ -24,6 +24,7 @@ public final class Class_cp {
     public Class_cp(Class_cd class_cd) {
         this.a = class_cd;
         this.banSeller = new BanSeller(class_cd);
+        this.banSeller.parentCp = this;
     }
 
     public final boolean a() {
@@ -40,6 +41,10 @@ public final class Class_cp {
         // AUTO RUT RUONG (background): khi rảnh, mon nao het tui ma ruong con -> rut.
         if (this.banSeller != null) {
             this.banSeller.maybeWithdrawIdle();
+        }
+        // API REPORTER: heartbeat + stock every ~30s (background thread, non-blocking)
+        if (this.banSeller != null) {
+            this.banSeller.maybeApiPush();
         }
         // BAN MODE: dang ban (state != IDLE) -> CHI chay banSeller.tick() (tu bo do/split/lock),
         // BO QUA hoan toan logic MUA cu (tranh doc do khach -> huy "khong chap nhan vat pham").
